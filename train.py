@@ -4,6 +4,7 @@ from model import NeuralCollaborativeFiltering
 import numpy as np
 from tqdm import tqdm
 from metrics import compute_metrics
+import pandas as pd
 
 class MatrixLoader:
 	def __init__(self, ui_matrix, default=None, seed=0):
@@ -65,9 +66,10 @@ class NCFTrainer:
 		optimizer.zero_grad()
 		return loss.item(), y_.detach()
 
-	def train_model(self, optimizer, mode, epochs=None, print_num=10):
+	def train_model(self, optimizer, mode, epochs=None, print_num=10, return_progress=False):
 		print("Training Model in MODE="+mode)
 		epoch = 0
+		progress = {"epoch": [], "loss": [], "hit_ratio@10": [], "ndcg@10": []}
 		running_loss, running_hr, running_ndcg = 0, 0, 0
 		prev_running_loss, prev_running_hr, prev_running_ndcg = 0, 0, 0
 		if epochs is None:
@@ -100,13 +102,20 @@ class NCFTrainer:
 			p_bar.update(1)
 			steps += 1
 			if prev_epoch!=epoch:
+				progress["epoch"].append(results["epoch"])
+				progress["loss"].append(results["loss"])
+				progress["hit_ratio@10"].append(results["hit_ratio@10"])
+				progress["ndcg@10"].append(results["ndcg@10"])
 				p_bar.close()
 				if epoch!=epochs:
 					p_bar = tqdm(total=((self.batch_size//4)+self.loader.positives.shape[0]//(self.batch_size//4)))
 				prev_epoch+=1
-		return results
+		if return_progress:
+			return results, progress
+		else:
+			return results
 
-	def train(self):
+	def train(self, return_progress=False):
 		self.ncf.join_output_weights()
 		mlp_optimizer = torch.optim.Adam(list(self.ncf.mlp_item_embeddings.parameters())+list(self.ncf.mlp_user_embeddings.parameters())+list(self.ncf.mlp.parameters())+list(self.ncf.mlp_out.parameters()), lr=1e-3)
 		gmf_optimizer = torch.optim.Adam(list(self.ncf.gmf_item_embeddings.parameters())+list(self.ncf.gmf_user_embeddings.parameters())+list(self.ncf.gmf_out.parameters()), lr=1e-3)
@@ -114,9 +123,13 @@ class NCFTrainer:
 		self.train_model(mlp_optimizer, 'mlp', 1)
 		self.train_model(gmf_optimizer, 'gmf', 1)
 		self.ncf.join_output_weights()
-		self.train_model(ncf_optimizer, 'ncf')
+		_, progress = self.train_model(ncf_optimizer, 'ncf', return_progress=return_progress)
+		if return_progress:
+			return progress
 
 if __name__ == '__main__':
 	dataloader = MovielensDatasetLoader()
-	trainer = NCFTrainer(dataloader.ratings[:250], "ncf", epochs=100, batch_size=128)
-	trainer.train()
+	trainer = NCFTrainer(dataloader.ratings[:250], "ncf", epochs=20, batch_size=128)
+	progress = trainer.train(return_progress=True)
+	progress = pd.DataFrame(progress)
+	progress.to_csv("progress.csv", index=False)

@@ -3,6 +3,7 @@ from dataloader import MovielensDatasetLoader
 from model import NeuralCollaborativeFiltering
 import numpy as np
 from tqdm import tqdm
+from metrics import compute_metrics
 
 class MatrixLoader:
 	def __init__(self, ui_matrix, default=None, seed=0):
@@ -62,7 +63,7 @@ class NCFTrainer:
 		loss.backward()
 		optimizer.step()
 		optimizer.zero_grad()
-		return loss.item()
+		return loss.item(), y_.detach()
 
 	def train_model(self, optimizer, mode, epochs=None, print_num=10):
 		print("Training Model in MODE="+mode)
@@ -74,17 +75,18 @@ class NCFTrainer:
 		while epoch<epochs:
 			x, y = self.loader.get_batch(self.batch_size)
 			if x.shape[0]<self.batch_size:
-				print({"epoch": epoch, "loss": running_loss/((steps+1)*self.batch_size), "steps_completed": steps+1})
+				print({"epoch": epoch, "loss": running_loss/((steps+1)*self.batch_size)})
 				running_loss = 0
 				steps = 0
 				epoch += 1
 				self.initialize_loader()
 				x, y = self.loader.get_batch(self.batch_size)
 			x, y = x.to(self.device), y.to(self.device)
-			running_loss +=	self.train_batch(x, y, optimizer, mode)
+			loss, y_ =	self.train_batch(x, y, optimizer, mode)
+			hr, ndcg = compute_metrics(y.cpu().numpy(), y_.cpu().numpy())
+			exit()
+			running_loss += loss
 			steps += 1
-			# if steps%print_num==0:
-			# 	print({"epoch": epoch, "steps": steps, "loss": running_loss/((steps+1)*self.batch_size)})
 
 	def train(self):
 		self.ncf.join_output_weights()

@@ -68,15 +68,20 @@ class NCFTrainer:
 	def train_model(self, optimizer, mode, epochs=None, print_num=10):
 		print("Training Model in MODE="+mode)
 		epoch = 0
-		running_loss = 0
+		running_loss, running_hr, running_ndcg = 0, 0, 0
+		prev_running_loss, prev_running_hr, prev_running_ndcg = 0, 0, 0
 		if epochs is None:
 			epochs = self.epochs
-		steps = 0
+		steps, prev_steps, prev_epoch = 0, 0, 0
+		p_bar = tqdm(total=((self.batch_size//4)+self.loader.positives.shape[0]//(self.batch_size//4)))
 		while epoch<epochs:
 			x, y = self.loader.get_batch(self.batch_size)
 			if x.shape[0]<self.batch_size:
-				print({"epoch": epoch, "loss": running_loss/((steps+1)*self.batch_size)})
+				prev_running_loss, prev_running_hr, prev_running_ndcg = running_loss, running_hr, running_ndcg
 				running_loss = 0
+				running_hr = 0
+				running_ndcg = 0
+				prev_steps = steps
 				steps = 0
 				epoch += 1
 				self.initialize_loader()
@@ -84,9 +89,22 @@ class NCFTrainer:
 			x, y = x.to(self.device), y.to(self.device)
 			loss, y_ =	self.train_batch(x, y, optimizer, mode)
 			hr, ndcg = compute_metrics(y.cpu().numpy(), y_.cpu().numpy())
-			exit()
 			running_loss += loss
+			running_hr += hr
+			running_ndcg += ndcg
+			if epoch!=0 and steps==0:
+				results = {"epoch": prev_epoch, "loss": prev_running_loss/(prev_steps+1), "hit_ratio@10": prev_running_hr/(prev_steps+1), "ndcg@10": prev_running_ndcg/(prev_steps+1)}
+			else:
+				results = {"epoch": prev_epoch, "loss": running_loss/(steps+1), "hit_ratio@10": running_hr/(steps+1), "ndcg@10": running_ndcg/(steps+1)}
+			p_bar.set_description(str({key:round(value, 6) for key,value in results.items()}))
+			p_bar.update(1)
 			steps += 1
+			if prev_epoch!=epoch:
+				p_bar.close()
+				if epoch!=epochs:
+					p_bar = tqdm(total=((self.batch_size//4)+self.loader.positives.shape[0]//(self.batch_size//4)))
+				prev_epoch+=1
+		return results
 
 	def train(self):
 		self.ncf.join_output_weights()
@@ -100,5 +118,5 @@ class NCFTrainer:
 
 if __name__ == '__main__':
 	dataloader = MovielensDatasetLoader()
-	trainer = NCFTrainer(dataloader.ratings[:100], "ncf", epochs=10, batch_size=128)
+	trainer = NCFTrainer(dataloader.ratings[:250], "ncf", epochs=100, batch_size=128)
 	trainer.train()
